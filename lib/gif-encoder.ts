@@ -201,5 +201,5 @@ export function encodeGif(
   }
 
   b(0x3b); // GIF trailer
-  return new Blob(parts, { type: 'image/gif' });
+  return new Blob(parts as BlobPart[], { type: 'image/gif' });
 }
