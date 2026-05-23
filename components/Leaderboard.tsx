@@ -24,37 +24,19 @@ export default function Leaderboard() {
       } as SharedMeme;
     };
 
-    // First try ordering by totalReactions (requires the field to exist on docs)
-    const qSorted = query(
-      collection(db, 'memes'),
-      orderBy('totalReactions', 'desc'),
-      limit(9),
-    );
-
-    const runFallback = () =>
-      getDocs(query(collection(db, 'memes'), orderBy('createdAt', 'desc'), limit(50)))
-        .then(fallbackSnap => {
-          const all = fallbackSnap.docs.map(toMeme);
-          const sorted = all
-            .map(m => ({
-              ...m,
-              totalReactions: m.totalReactions ?? Object.values(m.reactions ?? {}).reduce((s, n) => s + n, 0),
-            }))
-            .sort((a, b) => (b.totalReactions ?? 0) - (a.totalReactions ?? 0))
-            .slice(0, 9);
-          setMemes(sorted);
-        });
-
-    getDocs(qSorted)
+    // Fetch all memes (up to 200), compute reaction totals client-side, sort
+    getDocs(query(collection(db, 'memes'), orderBy('createdAt', 'desc'), limit(200)))
       .then(snap => {
-        if (!snap.empty) {
-          setMemes(snap.docs.map(toMeme));
-          return;
-        }
-        // No docs have totalReactions yet — fall back to client-side sort
-        return runFallback();
+        const sorted = snap.docs
+          .map(toMeme)
+          .map(m => ({
+            ...m,
+            totalReactions: m.totalReactions ?? Object.values(m.reactions ?? {}).reduce((s, n) => s + n, 0),
+          }))
+          .sort((a, b) => (b.totalReactions ?? 0) - (a.totalReactions ?? 0))
+          .slice(0, 9);
+        setMemes(sorted);
       })
-      .catch(() => runFallback()) // index missing or query error → fallback
       .finally(() => setLoading(false));
   }, []);
 
