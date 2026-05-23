@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db, storage } from '@/lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { encodeGif, type GifFrame } from '@/lib/gif-encoder';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,9 +133,10 @@ interface Props {
   onBack: () => void;
   onMemeShared?: () => void;
   onNeedAuth?: () => void;
+  isGif?: boolean;
 }
 
-export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, onNeedAuth }: Props) {
+export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, onNeedAuth, isGif }: Props) {
   const { user } = useAuth();
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const [img, setImg]           = useState<HTMLImageElement | null>(null);
@@ -145,6 +147,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
   const [sharing, setSharing]       = useState(false);
   const [copied, setCopied]         = useState(false);
   const [imgCopied, setImgCopied]   = useState(false);
+  const [recording, setRecording]   = useState(false);
   const dragging = useRef<{ id: string; ox: number; oy: number } | null>(null);
 
   // ── Load image + seed initial text positions ──────────────────────────────
@@ -171,12 +174,26 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
     image.src = imageUrl;
   }, [imageUrl, caption]);
 
-  // ── Render canvas whenever state changes ──────────────────────────────────
+  // ── Render canvas whenever state changes (static images) ─────────────────
   useEffect(() => {
+    if (isGif) return; // animated via rAF loop below
     const canvas = canvasRef.current;
     if (!canvas || !img || elements.length === 0) return;
     renderCanvas(canvas, img, elements, selectedId);
-  }, [img, elements, selectedId]);
+  }, [isGif, img, elements, selectedId]);
+
+  // ── Animation loop for GIFs ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!isGif || !img || elements.length === 0) return;
+    let animId: number;
+    const loop = () => {
+      const canvas = canvasRef.current;
+      if (canvas) renderCanvas(canvas, img, elements, selectedId);
+      animId = requestAnimationFrame(loop);
+    };
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, [isGif, img, elements, selectedId]);
 
   // ── Hit test ──────────────────────────────────────────────────────────────
   const hitTest = useCallback((cx: number, cy: number): string | null => {
@@ -296,6 +313,52 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
     }, 'image/png');
   };
 
+  // ── Download as GIF (captures animated frames from the live canvas) ────────
+  const downloadGif = useCallback(async () => {
+    if (!img || !canvasRef.current) return;
+    setRecording(true);
+
+    const canvas = canvasRef.current;
+    const FPS = 10;
+    const DURATION_MS = 3000; // capture 3 seconds
+    const TOTAL_FRAMES = FPS * (DURATION_MS / 1000);
+    const DELAY = Math.round(100 / FPS); // centiseconds
+
+    // Use an offscreen canvas so the display canvas keeps animating
+    const off = document.createElement('canvas');
+    off.width = canvas.width;
+    off.height = canvas.height;
+    const offCtx = off.getContext('2d')!;
+
+    const frames: GifFrame[] = [];
+
+    await new Promise<void>(resolve => {
+      let count = 0;
+      const capture = () => {
+        // Draw current GIF frame + text (no selection border)
+        renderCanvas(off, img, elements, null);
+        frames.push({
+          imageData: offCtx.getImageData(0, 0, off.width, off.height),
+          delay: DELAY,
+        });
+        count++;
+        if (count < TOTAL_FRAMES) {
+          setTimeout(capture, 1000 / FPS);
+        } else {
+          resolve();
+        }
+      };
+      capture();
+    });
+
+    const blob = encodeGif(frames, canvas.width, canvas.height);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'memegen.gif'; a.click();
+    URL.revokeObjectURL(url);
+    setRecording(false);
+  }, [img, elements]);
+
   // ── Share ─────────────────────────────────────────────────────────────────
   const handleShare = async () => {
     const canvas = canvasRef.current;
@@ -411,15 +474,22 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
 
               {/* Font size */}
               <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-[10px] uppercase tracking-widest text-purple-300/60">Size</label>
-                  <span className="text-xs text-purple-400/60 font-mono tabular-nums">{selectedEl.fontSize}px</span>
+                <label className="text-[10px] uppercase tracking-widest text-purple-300/60">Size</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range" min={10} max={200} value={selectedEl.fontSize}
+                    onChange={e => update({ fontSize: Number(e.target.value) })}
+                    className="flex-1 h-1.5 accent-purple-500 rounded-full"
+                  />
+                  <input
+                    type="number" min={10} max={200} value={selectedEl.fontSize}
+                    onChange={e => {
+                      const v = Math.min(200, Math.max(10, Number(e.target.value) || 10));
+                      update({ fontSize: v });
+                    }}
+                    className="w-14 rounded-lg bg-purple-950/30 border border-purple-700/30 px-2 py-1 text-xs text-purple-200 text-center font-mono focus:outline-none focus:border-purple-500/50 transition-colors"
+                  />
                 </div>
-                <input
-                  type="range" min={14} max={160} value={selectedEl.fontSize}
-                  onChange={e => update({ fontSize: Number(e.target.value) })}
-                  className="w-full h-1.5 accent-purple-500 rounded-full"
-                />
               </div>
 
               {/* Fill color */}
@@ -519,15 +589,40 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
           {saved ? (
             <div className="space-y-2">
               <div className="flex gap-2">
-                <button
-                  onClick={download}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-purple-900/40 hover:-translate-y-0.5 active:translate-y-0"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                  </svg>
-                  Download
-                </button>
+                {isGif ? (
+                  <button
+                    onClick={downloadGif}
+                    disabled={recording}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 disabled:from-purple-800 disabled:to-violet-800 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all shadow-lg shadow-purple-900/40 hover:-translate-y-0.5 active:translate-y-0"
+                  >
+                    {recording ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Creating GIF…
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                        </svg>
+                        Download GIF
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    onClick={download}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-purple-900/40 hover:-translate-y-0.5 active:translate-y-0"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Download
+                  </button>
+                )}
                 <button
                   onClick={copyImage}
                   className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-purple-700/40 hover:bg-purple-600/60 border border-purple-600/30 hover:border-purple-500/50 text-purple-200 text-sm font-medium transition-all"

@@ -106,7 +106,7 @@ export default function ImageUploader({ onImageSelected, previewUrl }: Props) {
             </div>
             <div className="text-center">
               <p className="text-purple-200 font-medium">Drop your photo here</p>
-              <p className="text-purple-400/60 text-sm mt-1">PNG, JPG, WEBP — max 10 MB</p>
+              <p className="text-purple-400/60 text-sm mt-1">PNG, JPG, WEBP, GIF — max 10 MB</p>
             </div>
             <div className="flex gap-3">
               <button
@@ -130,7 +130,7 @@ export default function ImageUploader({ onImageSelected, previewUrl }: Props) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/png,image/jpeg,image/webp,image/gif"
           className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
         />

@@ -41,6 +41,7 @@ export default function MemePage({ params }: { params: Promise<{ id: string }> }
     try {
       await updateDoc(doc(db, 'memes', id), {
         [`reactions.${emoji}`]: increment(1),
+        totalReactions: increment(1),
       });
     } catch {
       // revert optimistic on error

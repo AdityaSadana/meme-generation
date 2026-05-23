@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Leaderboard from '@/components/Leaderboard';
 
 const AUDIENCES = [
   {
@@ -127,6 +128,9 @@ export default function LandingPage() {
           ))}
         </div>
       </section>
+
+      {/* Leaderboard */}
+      <Leaderboard />
 
       {/* CTA */}
       <section className="w-full max-w-5xl mx-auto px-6 pb-24 text-center">

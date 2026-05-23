@@ -2,6 +2,21 @@ export async function resizeImageToBase64(
   file: File,
   maxSize = 1024
 ): Promise<{ base64: string; mimeType: string }> {
+  // GIFs: read directly as base64 — canvas conversion strips animation
+  if (file.type === 'image/gif') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.split(',')[1];
+        resolve({ base64, mimeType: 'image/gif' });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // All other images: resize to maxSize and convert to JPEG
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);

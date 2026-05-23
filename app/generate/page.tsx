@@ -123,6 +123,7 @@ export default function Home() {
             onBack={handleBackFromEditor}
             onMemeShared={() => setGalleryRefresh(k => k + 1)}
             onNeedAuth={() => setAuthOpen(true)}
+            isGif={imageFile?.type === 'image/gif'}
           />
         ) : (
           <>

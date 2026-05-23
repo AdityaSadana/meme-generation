@@ -22,4 +22,5 @@ export interface SharedMeme {
   captionBottom: string;
   createdAt: string;      // ISO 8601 string
   reactions: Record<string, number>;
+  totalReactions?: number;
 }
