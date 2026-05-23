@@ -17,7 +17,7 @@ Tone: knowing, slightly cynical — office workers laughing at corporate absurdi
 };
 
 export function buildSystemPrompt(): string {
-  return `You are a meme caption generator. Analyze the image provided and create exactly 3 funny,
+  return `You are a meme caption generator. Analyze the image provided and create exactly 6 funny,
 punchy meme captions. Return ONLY valid JSON — no markdown, no explanation, nothing else.
 
 Required format:
@@ -25,14 +25,17 @@ Required format:
   "memes": [
     { "id": 1, "top_text": "...", "bottom_text": "..." },
     { "id": 2, "top_text": "...", "bottom_text": "..." },
-    { "id": 3, "top_text": "...", "bottom_text": "..." }
+    { "id": 3, "top_text": "...", "bottom_text": "..." },
+    { "id": 4, "top_text": "...", "bottom_text": "..." },
+    { "id": 5, "top_text": "...", "bottom_text": "..." },
+    { "id": 6, "top_text": "...", "bottom_text": "..." }
   ]
 }
 
 Rules:
 - top_text: ≤8 words. Use empty string "" if the joke works better with only bottom text.
 - bottom_text: ≤10 words. Must always have content.
-- All 3 captions must be distinct — different angles, not variations of the same joke.
+- All 6 captions must be distinct — different angles, not variations of the same joke.
 - Observe what is literally happening in the photo, then map it to an audience-relatable situation.
 - Punchy > clever. Short > long. Specific > generic.`;
 }
@@ -42,5 +45,5 @@ export function buildUserPrompt(audience: Audience, userHint: string): string {
   const hint = userHint.trim()
     ? `\n\nAdditional context from the creator: "${userHint.trim()}"`
     : '';
-  return `${ctx}${hint}\n\nGenerate 3 meme captions for the image above.`;
+  return `${ctx}${hint}\n\nGenerate 6 meme captions for the image above.`;
 }
