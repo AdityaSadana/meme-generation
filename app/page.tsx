@@ -80,7 +80,11 @@ export default function Home() {
   const canGenerate = appState === 'ready' || appState === 'generating' || appState === 'results' || appState === 'error';
 
   return (
-    <div className="min-h-screen flex flex-col items-center px-4 py-10">
+    <>
+      {/* Auth Modal */}
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
+        
+      <div className="min-h-screen flex flex-col items-center px-4 py-10">
       {/* Top nav */}
       <div className="w-full max-w-5xl flex items-center justify-between mb-8 text-xs text-purple-300/50">
         {user ? (
@@ -219,7 +223,8 @@ export default function Home() {
       {user && (
         <MyMemes userId={user.userId} refreshKey={galleryRefresh} />
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
