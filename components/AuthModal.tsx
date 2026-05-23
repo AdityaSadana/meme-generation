@@ -108,12 +108,12 @@ export default function AuthModal({ isOpen, onClose }: Props) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 min-w-300" aria-modal="true" role="dialog">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" aria-modal="true" role="dialog">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={close} />
 
       {/* Card */}
-      <div className="relative z-10 w-full max-w-sm bg-[#0f0720] border border-purple-800/40 rounded-2xl shadow-2xl shadow-purple-950/60 overflow-hidden">
+      <div className="relative z-10 w-full max-w-sm bg-[#0f0720] border border-purple-800/40 rounded-2xl shadow-2xl shadow-purple-950/60">
 
         {/* Close */}
         <button

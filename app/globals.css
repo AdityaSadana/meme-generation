@@ -27,7 +27,7 @@ body::before {
     linear-gradient(90deg, rgba(139, 92, 246, 0.03) 1px, transparent 1px);
   background-size: 48px 48px;
   pointer-events: none;
-  z-index: 0;
+  z-index: -1;
 }
 
 /* Glow orbs */
@@ -41,10 +41,5 @@ body::after {
   height: 500px;
   background: radial-gradient(ellipse, rgba(109, 40, 217, 0.12) 0%, transparent 70%);
   pointer-events: none;
-  z-index: 0;
-}
-
-* {
-  position: relative;
-  z-index: 1;
+  z-index: -1;
 }
