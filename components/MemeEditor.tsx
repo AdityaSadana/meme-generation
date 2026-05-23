@@ -7,6 +7,7 @@ import { db, storage } from '@/lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { encodeGif, type GifFrame } from '@/lib/gif-encoder';
+import { removeBackground } from '@imgly/background-removal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,21 +16,27 @@ type TextAlign = 'left' | 'center' | 'right';
 interface TextElement {
   id: string;
   text: string;
-  x: number;         // canvas pixel — anchor point for the chosen alignment
-  y: number;         // canvas pixel — baseline of the first line
-  fontSize: number;  // canvas pixels
+  x: number;
+  y: number;
+  fontSize: number;
   color: string;
   strokeColor: string;
   align: TextAlign;
   bold: boolean;
 }
 
+type Background =
+  | { type: 'image' }
+  | { type: 'color'; value: string }
+  | { type: 'custom'; img: HTMLImageElement };
+
 interface BBox { left: number; top: number; right: number; bottom: number }
 
-// ─── Pure helpers (no component state) ───────────────────────────────────────
+// ─── Pure helpers ────────────────────────────────────────────────────────────
 
 const FILL_COLORS   = ['#ffffff', '#000000', '#ffff00', '#ff4444', '#ff8c00', '#a855f7'];
 const STROKE_COLORS = ['#000000', '#ffffff', '#1a0030'];
+const BG_COLORS     = ['#000000', '#ffffff', '#1a1a2e', '#0d1117', '#ff4444', '#a855f7', '#16213e', '#f5f5f5'];
 
 function applyFont(ctx: CanvasRenderingContext2D, el: TextElement) {
   ctx.font = `${el.bold ? 'bold' : 'normal'} ${el.fontSize}px Impact, "Arial Black", sans-serif`;
@@ -65,18 +72,47 @@ function getBBox(ctx: CanvasRenderingContext2D, el: TextElement, canvasWidth: nu
   return { left: left - 6, top: top - 6, right: left + w + 6, bottom: top + lines.length * lh + 6 };
 }
 
+function drawBackground(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  bg: Background,
+  w: number,
+  h: number,
+) {
+  if (bg.type === 'color') {
+    ctx.fillStyle = bg.value;
+    ctx.fillRect(0, 0, w, h);
+  } else if (bg.type === 'custom') {
+    const scale = Math.max(w / bg.img.width, h / bg.img.height);
+    const sw = bg.img.width * scale;
+    const sh = bg.img.height * scale;
+    ctx.drawImage(bg.img, (w - sw) / 2, (h - sh) / 2, sw, sh);
+  } else {
+    ctx.drawImage(img, 0, 0);
+  }
+}
+
 function renderCanvas(
   canvas: HTMLCanvasElement,
   img: HTMLImageElement,
   elements: TextElement[],
   selectedId: string | null,
+  bg: Background = { type: 'image' },
+  subjectImg: HTMLImageElement | null = null,
 ) {
   if (canvas.width !== img.width)   canvas.width  = img.width;
   if (canvas.height !== img.height) canvas.height = img.height;
 
   const ctx = canvas.getContext('2d')!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0);
+
+  if (subjectImg) {
+    // Draw chosen background, then the subject (transparent PNG) on top
+    drawBackground(ctx, img, bg, canvas.width, canvas.height);
+    ctx.drawImage(subjectImg, 0, 0, canvas.width, canvas.height);
+  } else {
+    drawBackground(ctx, img, bg, canvas.width, canvas.height);
+  }
 
   const maxW = canvas.width * 0.92;
 
@@ -95,7 +131,6 @@ function renderCanvas(
       ctx.fillText(line, el.x, y);
     });
 
-    // selection indicator (drawn after text so it's on top)
     if (el.id === selectedId) {
       const box = getBBox(ctx, el, canvas.width);
       ctx.save();
@@ -103,7 +138,6 @@ function renderCanvas(
       ctx.lineWidth   = Math.max(2, canvas.width / 400);
       ctx.setLineDash([6, 3]);
       ctx.strokeRect(box.left, box.top, box.right - box.left, box.bottom - box.top);
-      // corner handles
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(168, 85, 247, 0.9)';
       const hs = Math.max(5, canvas.width / 200);
@@ -139,9 +173,16 @@ interface Props {
 export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, onNeedAuth, isGif }: Props) {
   const { user } = useAuth();
   const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const [img, setImg]           = useState<HTMLImageElement | null>(null);
-  const [elements, setElements] = useState<TextElement[]>([]);
+  const bgFileRef  = useRef<HTMLInputElement>(null);
+
+  const [img, setImg]               = useState<HTMLImageElement | null>(null);
+  const [elements, setElements]     = useState<TextElement[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>('top');
+  const [bg, setBg]                 = useState<Background>({ type: 'image' });
+  const [customBgColor, setCustomBgColor] = useState('#000000');
+  const [subjectImg, setSubjectImg] = useState<HTMLImageElement | null>(null);
+  const [removingBg, setRemovingBg] = useState(false);
+
   const [saved, setSaved]           = useState(false);
   const [shareUrl, setShareUrl]     = useState<string | null>(null);
   const [sharing, setSharing]       = useState(false);
@@ -150,7 +191,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
   const [recording, setRecording]   = useState(false);
   const dragging = useRef<{ id: string; ox: number; oy: number } | null>(null);
 
-  // ── Load image + seed initial text positions ──────────────────────────────
+  // ── Load image ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const image = new Image();
     image.onload = () => {
@@ -174,33 +215,62 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
     image.src = imageUrl;
   }, [imageUrl, caption]);
 
-  // ── Render canvas whenever state changes (static images) ─────────────────
+  // ── Static render ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (isGif) return; // animated via rAF loop below
+    if (isGif) return;
     const canvas = canvasRef.current;
     if (!canvas || !img || elements.length === 0) return;
-    renderCanvas(canvas, img, elements, selectedId);
-  }, [isGif, img, elements, selectedId]);
+    renderCanvas(canvas, img, elements, selectedId, bg, subjectImg);
+  }, [isGif, img, elements, selectedId, bg, subjectImg]);
 
-  // ── Animation loop for GIFs ───────────────────────────────────────────────
+  // ── GIF animation loop ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!isGif || !img || elements.length === 0) return;
     let animId: number;
     const loop = () => {
       const canvas = canvasRef.current;
-      if (canvas) renderCanvas(canvas, img, elements, selectedId);
+      if (canvas) renderCanvas(canvas, img, elements, selectedId, bg, subjectImg);
       animId = requestAnimationFrame(loop);
     };
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
-  }, [isGif, img, elements, selectedId]);
+  }, [isGif, img, elements, selectedId, bg, subjectImg]);
 
-  // ── Hit test ──────────────────────────────────────────────────────────────
+  // ── Load custom background image ────────────────────────────────────────────
+  const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => setBg({ type: 'custom', img: image });
+    image.src = url;
+    // reset so same file can be re-selected
+    e.target.value = '';
+  };
+
+  // ── Remove background ────────────────────────────────────────────────────────
+  const handleRemoveBg = async () => {
+    setRemovingBg(true);
+    try {
+      const blob = await removeBackground(imageUrl);
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.onload = () => {
+        setSubjectImg(image);
+        // Auto-switch to white bg so the subject is visible against something
+        setBg(prev => prev.type === 'image' ? { type: 'color', value: '#ffffff' } : prev);
+      };
+      image.src = url;
+    } catch (e) {
+      console.error('Background removal failed', e);
+    } finally {
+      setRemovingBg(false);
+    }
+  };
   const hitTest = useCallback((cx: number, cy: number): string | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const ctx = canvas.getContext('2d')!;
-    // iterate in reverse render order so topmost text wins
     for (const el of [...elements].reverse()) {
       const box = getBBox(ctx, el, canvas.width);
       if (cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom) return el.id;
@@ -275,7 +345,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
 
   const selectedEl = elements.find(el => el.id === selectedId) ?? null;
 
-  // ── Save (clears selection so borders disappear) ──────────────────────────
+  // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = () => {
     setSelectedId(null);
     setSaved(true);
@@ -295,69 +365,50 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
     }, 'image/png');
   };
 
-  // ── Copy image to clipboard ───────────────────────────────────────────────
+  // ── Copy image ────────────────────────────────────────────────────────────
   const copyImage = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.toBlob(async blob => {
       if (!blob) return;
       try {
-        await navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': blob }),
-        ]);
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         setImgCopied(true);
         setTimeout(() => setImgCopied(false), 2000);
-      } catch {
-        // Fallback: clipboard API not supported or denied
-      }
+      } catch { /* not supported */ }
     }, 'image/png');
   };
 
-  // ── Download as GIF (captures animated frames from the live canvas) ────────
+  // ── Download GIF ──────────────────────────────────────────────────────────
   const downloadGif = useCallback(async () => {
     if (!img || !canvasRef.current) return;
     setRecording(true);
-
     const canvas = canvasRef.current;
-    const FPS = 10;
-    const DURATION_MS = 3000; // capture 3 seconds
+    const FPS = 10, DURATION_MS = 3000;
     const TOTAL_FRAMES = FPS * (DURATION_MS / 1000);
-    const DELAY = Math.round(100 / FPS); // centiseconds
-
-    // Use an offscreen canvas so the display canvas keeps animating
+    const DELAY = Math.round(100 / FPS);
     const off = document.createElement('canvas');
-    off.width = canvas.width;
-    off.height = canvas.height;
+    off.width = canvas.width; off.height = canvas.height;
     const offCtx = off.getContext('2d')!;
-
     const frames: GifFrame[] = [];
-
     await new Promise<void>(resolve => {
       let count = 0;
       const capture = () => {
-        // Draw current GIF frame + text (no selection border)
-        renderCanvas(off, img, elements, null);
-        frames.push({
-          imageData: offCtx.getImageData(0, 0, off.width, off.height),
-          delay: DELAY,
-        });
+        renderCanvas(off, img, elements, null, bg, subjectImg);
+        frames.push({ imageData: offCtx.getImageData(0, 0, off.width, off.height), delay: DELAY });
         count++;
-        if (count < TOTAL_FRAMES) {
-          setTimeout(capture, 1000 / FPS);
-        } else {
-          resolve();
-        }
+        if (count < TOTAL_FRAMES) setTimeout(capture, 1000 / FPS);
+        else resolve();
       };
       capture();
     });
-
     const blob = encodeGif(frames, canvas.width, canvas.height);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'memegen.gif'; a.click();
     URL.revokeObjectURL(url);
     setRecording(false);
-  }, [img, elements]);
+  }, [img, elements, bg, subjectImg]);
 
   // ── Share ─────────────────────────────────────────────────────────────────
   const handleShare = async () => {
@@ -368,29 +419,20 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
       const memeId = `${user.userId.slice(0, 8)}_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
       const topEl = elements.find(e => e.id === 'top');
       const botEl = elements.find(e => e.id === 'bottom');
-
-      // Upload JPEG to Firebase Storage
       const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/jpeg', 0.82);
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/jpeg', 0.82);
       });
       const storageRef = ref(storage, `memes/${user.userId}/${memeId}.jpg`);
       await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
       const imageUrl = await getDownloadURL(storageRef);
-
-      // Write meme doc to Firestore (no email field)
       await setDoc(doc(db, 'memes', memeId), {
-        id: memeId,
-        userId: user.userId,
-        imageUrl,
-        captionTop: topEl?.text ?? '',
-        captionBottom: botEl?.text ?? '',
-        createdAt: serverTimestamp(),
-        reactions: {},
+        id: memeId, userId: user.userId, imageUrl,
+        captionTop: topEl?.text ?? '', captionBottom: botEl?.text ?? '',
+        createdAt: serverTimestamp(), reactions: {},
       });
-
       setShareUrl(`${window.location.origin}/meme/${memeId}`);
       onMemeShared?.();
-    } catch { /* silent — could add an error toast here */ }
+    } catch { /* silent */ }
     finally { setSharing(false); }
   };
 
@@ -441,7 +483,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
 
         {/* ── Properties panel ── */}
         <div className="w-full lg:w-68 shrink-0 space-y-3">
-          {/* Tab selector */}
+          {/* Text tab selector */}
           <div className="flex gap-2">
             {elements.map(el => (
               <button
@@ -458,6 +500,126 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
             ))}
           </div>
 
+          {/* ── Background panel ── */}
+          <div className="bg-[#110820] border border-purple-800/30 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-[10px] uppercase tracking-widest text-purple-300/60">Background</label>
+              {subjectImg && (
+                <button
+                  onClick={() => { setSubjectImg(null); setBg({ type: 'image' }); }}
+                  className="text-[10px] text-purple-400/60 hover:text-purple-300 transition-colors"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* Remove background button */}
+            <button
+              onClick={handleRemoveBg}
+              disabled={removingBg}
+              className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl border text-xs font-medium transition-all
+                ${subjectImg
+                  ? 'border-emerald-500/40 bg-emerald-900/20 text-emerald-300'
+                  : 'border-purple-600/40 bg-purple-800/20 hover:bg-purple-700/30 text-purple-300 hover:text-purple-200'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {removingBg ? (
+                <>
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Removing background…
+                </>
+              ) : subjectImg ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  Background removed
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" />
+                  </svg>
+                  Remove Background (AI)
+                </>
+              )}
+            </button>
+
+            {/* Color/image controls — only meaningful when bg is being used */}
+            <div className="flex flex-wrap gap-2">
+              {/* Original image (only useful when no subject extracted) */}
+              {!subjectImg && (
+                <button
+                  title="Original image"
+                  onClick={() => setBg({ type: 'image' })}
+                  className={`w-8 h-8 rounded-lg border-2 overflow-hidden transition-all
+                    ${bg.type === 'image' ? 'border-purple-400 scale-110 shadow-md' : 'border-white/10 hover:border-purple-500/50'}`}
+                  style={{ backgroundImage: img ? `url(${imageUrl})` : undefined, backgroundSize: 'cover' }}
+                />
+              )}
+
+              {/* Preset solid colors */}
+              {BG_COLORS.map(c => (
+                <button
+                  key={c} title={c}
+                  onClick={() => setBg({ type: 'color', value: c })}
+                  className={`w-8 h-8 rounded-lg border-2 transition-all ${
+                    bg.type === 'color' && bg.value === c
+                      ? 'border-purple-400 scale-110 shadow-md'
+                      : 'border-white/10 hover:border-purple-500/50'
+                  }`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+
+            {/* Custom color picker */}
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] text-purple-400/60 shrink-0">Custom color</label>
+              <div className="flex items-center gap-1.5 flex-1">
+                <input
+                  type="color"
+                  value={customBgColor}
+                  onChange={e => {
+                    setCustomBgColor(e.target.value);
+                    setBg({ type: 'color', value: e.target.value });
+                  }}
+                  className="w-8 h-7 rounded cursor-pointer border-0 bg-transparent p-0"
+                />
+                <span className="text-[10px] text-purple-400/50 font-mono">
+                  {bg.type === 'color' ? bg.value : customBgColor}
+                </span>
+              </div>
+            </div>
+
+            {/* Upload custom background image */}
+            <input
+              ref={bgFileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={handleBgImageUpload}
+            />
+            <button
+              onClick={() => bgFileRef.current?.click()}
+              className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl border text-xs font-medium transition-all
+                ${bg.type === 'custom'
+                  ? 'border-purple-500/50 bg-purple-600/20 text-purple-200'
+                  : 'border-purple-800/30 bg-purple-950/20 text-purple-400/70 hover:border-purple-600/40 hover:text-purple-300'
+                }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18M3.75 3h16.5M3.75 3A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21M3.75 3h-.375a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 003.75 21m16.5 0A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3m0 0H3.75m16.5 0h.375a2.25 2.25 0 012.25 2.25v13.5a2.25 2.25 0 01-2.25 2.25H20.25" />
+              </svg>
+              {bg.type === 'custom' ? 'Change image' : 'Upload image'}
+            </button>
+          </div>
+
+          {/* ── Text properties ── */}
           {selectedEl ? (
             <div className="bg-[#110820] border border-purple-800/30 rounded-2xl p-4 space-y-5">
 
@@ -656,8 +818,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
                   </p>
                   <div className="flex gap-2">
                     <input
-                      readOnly
-                      value={shareUrl}
+                      readOnly value={shareUrl}
                       className="flex-1 min-w-0 rounded-lg bg-purple-950/40 border border-purple-700/30 px-2.5 py-1.5 text-xs text-purple-300 font-mono truncate focus:outline-none"
                     />
                     <button

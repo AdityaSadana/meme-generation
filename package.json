@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",
+    "@imgly/background-removal": "^1.7.0",
     "@openrouter/sdk": "^0.12.35",
     "@types/react-modal": "^3.16.3",
     "firebase": "^12.13.0",

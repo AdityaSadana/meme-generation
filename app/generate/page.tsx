@@ -85,18 +85,24 @@ export default function Home() {
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />  
         
       {/* Top nav */}
-      <div className="w-full max-w-5xl flex items-center justify-between mb-8 text-xs text-purple-300/50">
+      <div className="w-full max-w-5xl flex items-center justify-between mb-8">
         {user ? (
-          <span className="truncate max-w-[180px]">{user.email}</span>
+          <span className="truncate max-w-[180px] text-xs text-purple-300/70">{user.email}</span>
         ) : (
           <span />
         )}
         {user ? (
-          <button onClick={signOut} className="hover:text-purple-200 transition-colors cursor-pointer">
+          <button
+            onClick={signOut}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border border-purple-700/50 bg-purple-900/30 text-purple-300 hover:bg-purple-800/40 hover:text-white hover:border-purple-500/60 transition-all cursor-pointer"
+          >
             Sign out
           </button>
         ) : (
-          <button onClick={() => setAuthOpen(true)} className="hover:text-purple-200 transition-colors cursor-pointer">
+          <button
+            onClick={() => setAuthOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border border-purple-500/60 bg-purple-700/30 text-purple-200 hover:bg-purple-600/50 hover:text-white hover:border-purple-400/70 transition-all cursor-pointer"
+          >
             Sign in
           </button>
         )}
@@ -109,7 +115,7 @@ export default function Home() {
             MemeGen
           </span>
         </h1>
-        <p className="text-purple-300/60 text-base max-w-sm mx-auto">
+        <p className="text-purple-300/80 text-base max-w-sm mx-auto">
           Upload a photo. Pick your crowd. Get 3 memes that actually land.
         </p>
       </header>
@@ -204,7 +210,7 @@ export default function Home() {
               <div className="flex justify-center pt-2">
                 <button
                   onClick={handleReset}
-                  className="text-sm text-purple-400/60 hover:text-purple-300 transition-colors"
+                  className="text-sm text-purple-400/80 hover:text-purple-300 transition-colors"
                 >
                   Start over
                 </button>
@@ -215,8 +221,8 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-16 text-center text-purple-400/40 text-xs">
-        Built with AI · Images stay in your browser
+      <footer className="mt-16 text-center text-purple-400/60 text-xs">
+        Images stay in your browser
       </footer>
 
       {/* Creator gallery */}
