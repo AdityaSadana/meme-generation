@@ -144,6 +144,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
   const [shareUrl, setShareUrl]     = useState<string | null>(null);
   const [sharing, setSharing]       = useState(false);
   const [copied, setCopied]         = useState(false);
+  const [imgCopied, setImgCopied]   = useState(false);
   const dragging = useRef<{ id: string; ox: number; oy: number } | null>(null);
 
   // ── Load image + seed initial text positions ──────────────────────────────
@@ -274,6 +275,24 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
       const a = document.createElement('a');
       a.href = url; a.download = 'memegen.png'; a.click();
       URL.revokeObjectURL(url);
+    }, 'image/png');
+  };
+
+  // ── Copy image to clipboard ───────────────────────────────────────────────
+  const copyImage = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.toBlob(async blob => {
+      if (!blob) return;
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob }),
+        ]);
+        setImgCopied(true);
+        setTimeout(() => setImgCopied(false), 2000);
+      } catch {
+        // Fallback: clipboard API not supported or denied
+      }
     }, 'image/png');
   };
 
@@ -499,15 +518,37 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
           {/* Save / Download / Share */}
           {saved ? (
             <div className="space-y-2">
-              <button
-                onClick={download}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-purple-900/40 hover:-translate-y-0.5 active:translate-y-0"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
-                Download PNG
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={download}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-purple-900/40 hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  Download
+                </button>
+                <button
+                  onClick={copyImage}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-purple-700/40 hover:bg-purple-600/60 border border-purple-600/30 hover:border-purple-500/50 text-purple-200 text-sm font-medium transition-all"
+                >
+                  {imgCopied ? (
+                    <>
+                      <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+                      </svg>
+                      Copy Image
+                    </>
+                  )}
+                </button>
+              </div>
 
               {/* Share section */}
               {shareUrl ? (
