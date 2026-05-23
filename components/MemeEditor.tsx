@@ -416,7 +416,7 @@ export default function MemeEditor({ imageUrl, caption, onBack, onMemeShared, on
     if (!canvas || !user) return;
     setSharing(true);
     try {
-      const memeId = `${user.userId.slice(0, 8)}_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      const memeId = `${user.userId.slice(0, 8)}_${crypto.randomUUID().replace(/-/g, '')}`;
       const topEl = elements.find(e => e.id === 'top');
       const botEl = elements.find(e => e.id === 'bottom');
       const blob = await new Promise<Blob>((resolve, reject) => {
